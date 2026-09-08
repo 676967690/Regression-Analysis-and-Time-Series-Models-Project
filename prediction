@@ -1,0 +1,169 @@
+"""
+Stock Price Forecasting using ARIMA
+------------------------------------
+Pipeline:
+  1. Download historical price data (yfinance)
+  2. Compute 5-day log returns
+  3. Test stationarity with the Augmented Dickey-Fuller (ADF) test
+  4. Detect and correct anomalies (values beyond 3-sigma from the mean)
+  5. Use ACF/PACF plots to select ARIMA order
+  6. Fit an ARIMA(1, 0, 3) model
+  7. Evaluate residual diagnostics and forecast against held-out test data
+"""
+
+import warnings
+warnings.filterwarnings("ignore")
+
+from datetime import datetime
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import yfinance as yf
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.stattools import adfuller
+
+
+# Config
+
+TICKER = "META"
+START_DATE = datetime(2022, 1, 1)
+END_DATE = datetime(2024, 4, 1)
+LOG_RETURN_WINDOW = 5     # trading days
+TRAIN_SIZE = 510          # rows used for training; remainder is test
+ARIMA_ORDER = (1, 0, 3)   # (p, d, q) chosen from ACF/PACF inspection
+
+
+
+# Download data
+
+def download_price_data(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
+    """Fetch OHLC data and return a DataFrame indexed by date."""
+    raw = yf.Ticker(ticker).history(start=start, end=end).dropna()
+    df = pd.DataFrame(raw).reset_index()
+    df["Date"] = pd.to_datetime(df["Date"].astype(str).str[:10])
+    df.set_index("Date", inplace=True)
+    return df
+
+
+
+# Log returns
+
+def compute_log_returns(df: pd.DataFrame, window: int = LOG_RETURN_WINDOW) -> pd.Series:
+    """
+    log_return_t = log( close_t / open_{t-window} )
+
+    Captures the return over `window` trading days, using the opening
+    price `window` days ago as the reference point.
+    """
+    close = df["Close"]
+    open_ = df["Open"]
+    log_return = close.copy()
+    for i in range(window, len(df)):
+        log_return.iloc[i] = np.log(close.iloc[i] / open_.iloc[i - window])
+    return log_return.iloc[window:]  # drop the un-computed warm-up rows
+
+
+
+# Stationarity check
+
+def adf_test(series: pd.Series) -> None:
+    stat, p_value = adfuller(series)[:2]
+    print(f"ADF Statistic: {stat:.6f}")
+    print(f"p-value:       {p_value:.6f}")
+    verdict = "stationary" if p_value < 0.05 else "NOT stationary"
+    print(f"=> Series is {verdict} at the 5% significance level.\n")
+
+
+
+# Anomaly detection & correction (3-sigma rule)
+
+def detect_and_fix_anomalies(series: pd.Series) -> pd.Series:
+    """
+    Flag points more than 3 standard deviations from the mean, replace
+    them with the average of their neighbours (clipped to the 3-sigma
+    bound so the correction can't overshoot).
+    """
+    series = series.copy()
+    mu, sigma = series.mean(), series.std()
+    lower, upper = mu - 3 * sigma, mu + 3 * sigma
+
+    anomalies = series[(series < lower) | (series > upper)]
+    print(f"Found {len(anomalies)} anomalies (outside [{lower:.4f}, {upper:.4f}])")
+
+    idx = series.index
+    for date in anomalies.index:
+        pos = idx.get_loc(date)
+        prev_val = series.iloc[pos - 1] if pos > 0 else series[date]
+        next_val = series.iloc[pos + 1] if pos < len(series) - 1 else series[date]
+        interpolated = (prev_val + next_val) / 2
+        if series[date] > 0:
+            series[date] = min(interpolated, upper)
+        else:
+            series[date] = max(interpolated, lower)
+
+    return series, lower, upper
+
+
+
+# Plot helpers
+
+def plot_series(series: pd.Series, title: str, ylabel: str):
+    plt.figure(figsize=(10, 4))
+    plt.plot(series)
+    plt.title(title, fontsize=18)
+    plt.ylabel(ylabel, fontsize=14)
+    plt.axhline(series.mean(), color="r", alpha=0.3, linestyle="--")
+    plt.tight_layout()
+    plt.show()
+
+
+def main():
+    # Data
+    prices = download_price_data(TICKER, START_DATE, END_DATE)
+    plot_series(prices["Close"], f"{TICKER} Close Price", "Price")
+
+    # Log returns
+    log_return_full = compute_log_returns(prices)
+    train = log_return_full.iloc[:TRAIN_SIZE]
+    test = log_return_full.iloc[TRAIN_SIZE:]
+    plot_series(log_return_full, "5-Day Log Return", "Log Return")
+
+    # Stationarity
+    print("ADF test on raw log returns:")
+    adf_test(train)
+
+    # Anomaly detection + correction (fit on training data only)
+    train_clean, lower, upper = detect_and_fix_anomalies(train)
+    plot_series(train_clean, "Log Return (anomalies corrected)", "Log Return")
+
+    # ACF / PACF to select ARIMA order
+    train_df = pd.DataFrame(train_clean)
+    plot_acf(train_df, lags=40)
+    plot_pacf(train_df, lags=40)
+    plt.show()
+
+    # Fit ARIMA
+    model = ARIMA(train_df, order=ARIMA_ORDER)
+    model_fit = model.fit()
+    print(model_fit.summary())
+    model_fit.plot_diagnostics(figsize=(15, 12))
+    plt.show()
+
+    # Forecast & compare against held-out test data
+    forecast_horizon = len(test)
+    forecast = model_fit.get_forecast(steps=forecast_horizon)
+    forecast_mean = forecast.predicted_mean
+    forecast_mean.index = test.index
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(log_return_full.iloc[-120:], color="magenta", alpha=0.7, label="Actual")
+    plt.plot(forecast_mean, color="c", label="Forecast")
+    plt.legend()
+    plt.title(f"ARIMA{ARIMA_ORDER} Forecast vs Actual")
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
