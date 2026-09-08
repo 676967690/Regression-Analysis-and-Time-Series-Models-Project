@@ -6,33 +6,27 @@ study, but the pipeline works for any ticker supported by `yfinance`.
 
 ## What it does
 
-1. **Data collection** — pulls historical OHLC price data with `yfinance`.
-2. **Feature construction** — computes the 5-day log return:
-
-   ```
+1. Data collection — pulls historical OHLC price data with `yfinance`.
+2. Feature construction — computes the 5-day log return:
    log_return_t = log( close_t / open_{t-5} )
-   ```
 
-3. **Stationarity check** — runs the Augmented Dickey-Fuller (ADF) test to
+3. Stationarity check — runs the Augmented Dickey-Fuller (ADF) test to
    confirm the return series is stationary (a prerequisite for ARIMA).
-4. **Anomaly detection & correction** — flags return values more than 3
+4. Anomaly detection & correction — flags return values more than 3
    standard deviations from the mean, then corrects them by interpolating
    between neighbouring points (clipped to the 3σ bound).
-5. **Model order selection** — inspects ACF/PACF plots to choose the
+5. Model order selection — inspects ACF/PACF plots to choose the
    autoregressive (p) and moving-average (q) terms.
-6. **Model fitting** — fits an `ARIMA(1, 0, 3)` model via `statsmodels`
+6. Model fitting — fits an `ARIMA(1, 0, 3)` model via `statsmodels`
    and reports coefficients, AIC/BIC, and residual diagnostics
    (Ljung-Box, Q-Q plot, correlogram).
-7. **Forecasting** — forecasts the held-out test period and plots it
+7. Forecasting — forecasts the held-out test period and plots it
    against the actual observed returns.
 
 ## Example result
 
 For META (Jan 2022 – Apr 2024), the fitted model was:
-
-```
 ŷ_t = 0.64·y_(t-1) + 0.30·ε_(t-1) + 0.16·ε_(t-2) + 0.25·ε_(t-3)
-```
 
 The ADF test rejected the null hypothesis of a unit root (p ≈ 6e-5),
 confirming the log-return series is stationary. Residual diagnostics
@@ -41,11 +35,10 @@ showed roughly white-noise residuals with heavier-than-normal tails
 
 ## Getting started
 
-```bash
 pip install yfinance statsmodels numpy pandas matplotlib seaborn
 
 python stock_arima_forecasting.py
-```
+
 
 Edit the constants at the top of `stock_arima_forecasting.py`
 (`TICKER`, `START_DATE`, `END_DATE`, `ARIMA_ORDER`, etc.) to run the
@@ -64,7 +57,7 @@ pipeline on a different stock or time window.
 
 ## Requirements
 
-- Python 3.9+
+- Python 3
 - yfinance
 - statsmodels
 - numpy, pandas, matplotlib, seaborn
